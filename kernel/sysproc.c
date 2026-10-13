@@ -6,6 +6,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "vm.h"
+#include "sysinfo.h"
 
 uint64
 sys_exit(void)
@@ -109,4 +110,43 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+// trace(mask): trace later syscalls whose bit is set in mask.
+uint64
+sys_trace(void)
+{
+  int mask;
+
+  argint(0, &mask);
+  myproc()->tracemask = mask;
+  return 0;
+}
+
+// sysinfo(info): fill a struct sysinfo at user address info.
+uint64
+sys_sysinfo(void)
+{
+  uint64 addr;
+  struct sysinfo info;
+
+  argaddr(0, &addr);
+  info.freemem = kfreemem();
+  info.nproc = nproc();
+  info.nopenfile = nopenfile();
+  if (copyout(myproc()->pagetable, myproc()->sz, addr, (char *)&info, sizeof(info)) < 0)
+    return -1;
+  return 0;
+}
+
+// getprocs(buf, max): copy up to max struct uprocs to buf.
+uint64
+sys_getprocs(void)
+{
+  uint64 addr;
+  int max;
+
+  argaddr(0, &addr);
+  argint(1, &max);
+  return getprocs(addr, max);
 }

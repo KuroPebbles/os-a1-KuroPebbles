@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "uproc.h"
 
 struct cpu cpus[NCPU];
 
@@ -167,6 +168,7 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->tracemask = 0;
   p->state = UNUSED;
 }
 
@@ -288,6 +290,9 @@ kfork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
+
+  // Children inherit the parent's trace mask.
+  np->tracemask = p->tracemask;
 
   pid = np->pid;
 
@@ -700,4 +705,62 @@ procdump(void)
     printk("%d %s %s", p->pid, state, p->name);
     printk("\n");
   }
+}
+
+// Returns the number of processes whose state is not UNUSED.
+uint64
+nproc(void)
+{
+  struct proc *p;
+  uint64 n = 0;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->state != UNUSED)
+      n++;
+    release(&p->lock);
+  }
+  return n;
+}
+
+// Copies one struct uproc per non-UNUSED process, in proc[] order, to the
+// user array at addr, stopping after max entries. Returns the number copied,
+// or -1 if max < 0 or a copyout fails.
+//
+// Locking: p->parent needs wait_lock, taken before p->lock (same order as
+// kexit()/kwait()). Each entry is snapshotted into one local uproc under
+// both locks, and both are dropped before copyout(), which may fault/sleep.
+// While wait_lock is held the parent can't be freed or reparented, so
+// reading p->parent->pid without the parent's own lock is safe.
+int
+getprocs(uint64 addr, int max)
+{
+  struct proc *p, *self = myproc();
+  struct uproc u;
+  int n = 0, found;
+
+  if (max < 0)
+    return -1;
+
+  for (p = proc; p < &proc[NPROC] && n < max; p++) {
+    acquire(&wait_lock);
+    acquire(&p->lock);
+    found = p->state != UNUSED;
+    if (found) {
+      u.pid = p->pid;
+      u.ppid = p->parent ? p->parent->pid : 0;
+      u.state = p->state;
+      u.sz = p->sz;
+      memmove(u.name, p->name, sizeof(u.name));
+    }
+    release(&p->lock);
+    release(&wait_lock);
+
+    if (found) {
+      if (copyout(self->pagetable, self->sz, addr + n * sizeof(u), (char *)&u, sizeof(u)) < 0)
+        return -1;
+      n++;
+    }
+  }
+  return n;
 }

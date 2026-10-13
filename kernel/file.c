@@ -177,3 +177,18 @@ filewrite(struct file *f, uint64 addr, int n)
 
   return ret;
 }
+
+// Returns the number of file-table entries in use (ref > 0).
+uint64
+nopenfile(void)
+{
+  struct file *f;
+  uint64 n = 0;
+
+  acquire(&ftable.lock);
+  for (f = ftable.file; f < ftable.file + NFILE; f++)
+    if (f->ref > 0)
+      n++;
+  release(&ftable.lock);
+  return n;
+}
